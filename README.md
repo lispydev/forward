@@ -2,7 +2,7 @@
 
 forward is a frontend to manage port forwarding rules with iptables.
 
-It is similar to UFW, which is a frontend for firewall rules in iptables.
+It works similarly to UFW, the uncomplicated firewall.
 
 
 # How to use
