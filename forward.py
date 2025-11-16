@@ -1,0 +1,325 @@
+#!/bin/python3
+
+"""
+forward is the ufw of port forwarding.
+
+Please note that port forwarding will ignore firewall rules created with ufw.
+"""
+
+# TODO: validate input (in parse_port_forward)
+
+# TODO: allow specifying outgoing interface
+# iptables syntax: iptables -I FORWARD -o virbr1 -p udp -d $GUEST_IP --dport $GUEST_PORT -j ACCEPT
+
+# TODO: when the interface is set, add a nat MASQUERADE rule to tag the trafic as coming from this machine ?
+# (without this, port forwarding only works if the forwarding machine is the gateway, since trafic will still be marked as coming from the original source)
+
+import sys
+from dataclasses import dataclass
+
+from subprocess import Popen, PIPE, STDOUT
+
+
+# copy pasted from https://github.com/lispydev/disk-replicator
+# TODO: find a more recent version (ex: the one used in closet)
+# (this one does not merge stdout and stderr)
+def system(cmd, stdin=None, stderr=False):
+    "stdout[, stderr], errcode = system(command[, stdin][, stderr=True])"
+    # merge stdout and stderr, and return error code instead
+    if stdin is not None:
+        stdin = stdin.encode()
+    process = Popen(cmd, shell=True,
+                    stdout=PIPE,
+                    stderr=PIPE if stderr else STDOUT)
+    out, err = process.communicate(stdin)
+    returncode = process.returncode
+    if stderr:
+        return out.decode(), err.decode(), returncode
+    else:
+        return out.decode(), returncode
+
+
+
+
+# a port forward as described by the user
+# TODO: get better at finding names
+# TODO: link port forward rules with iptables rewrite and forward rules
+@dataclass
+class Rule:
+    src_port: int
+    dst_address: str
+    dst_port: int
+    protocols: list
+
+
+# port forward rules as described by iptables (packet rewrites and packet forwards)
+@dataclass
+class Rewrite:
+    src_port: int
+    dst_address: str
+    dst_port: int
+    protocol: str
+
+    index: int
+
+@dataclass
+class Forward:
+    src_port: int
+    dst_address: str
+    dst_port: int
+    protocol: str
+
+    index: int
+
+
+# TODO: refactor (iptables comments are used many times)
+def comment_marker(rule):
+    pass
+
+
+# argument parsing ("add port ... to ...:... proto ...", "del port ...")
+def parse_port_forward(argv):
+    args = {
+        "src-port": None,
+        "dst-addr": None,
+        "dst-port": None,
+        "protocol": None,
+    }
+    i = 0
+    while i < len(argv):
+        kw = argv[i]
+        if kw == "proto":
+            args["protocol"] = argv[i + 1]
+            i += 2
+        elif kw == "port":
+            args["src-port"] = argv[i + 1]
+            i += 2
+        elif kw == "to":
+            destination = argv[i + 1]
+            if ":" in destination:
+                dst_addr, dst_port = destination.split(":")
+                args["dst-addr"] = dst_addr
+                args["dst-port"] = dst_port
+            else:
+                args["dst-addr"] = destination
+                # set after finishing arg parsing
+                args["dst-port"] = "=src-port"
+            i += 2
+        else:
+            print(f"Error: Unexpected argument '{kw}'")
+            usage()
+
+
+    # post-processing
+    if args["src-port"] is None:
+        print("Error: Expecting a port to forward")
+        usage()
+
+    if args["dst-port"] == "=src-port":
+        args["dst-port"] == args["src-port"]
+
+    if args["protocol"] is None:
+        args["protocols"] = ["tcp", "udp"]
+    elif args["protocol"] == "tcp":
+        args["protocols"] = ["tcp"]
+    elif args["protocol"] == "udp":
+        args["protocols"] = ["udp"]
+    else:
+        proto = args["protocol"]
+        raise ValueError(f"Unknown protocol '{proto}'")
+
+    return args
+
+def parse_add(argv):
+    args = parse_port_forward(argv[2:])
+
+    # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
+    #return args
+    return [args["src-port"], args["dst-addr"], args["dst-port"], args["protocols"]]
+
+def add(src_port, dst_addr, dst_port, protocols):
+    for proto in protocols:
+        comment_marker = f"portforward: {src_port}/{proto} -> {dst_addr}:{dst_port}"  # used to recognize rules created by this program and identify them
+        packet_rewrite = f"iptables -t nat -I PREROUTING -p {proto} --dport {src_port} -j DNAT --to {dst_addr}:{dst_port} -m comment --comment \"{comment_marker} (rewrite to forwarded packet)\""
+        packet_forward = f"iptables -I FORWARD -p {proto} -d {dst_addr} --dport {dst_port} -j ACCEPT -m comment --comment \"{comment_marker} (accept forwarded packet)\""
+
+        print(packet_rewrite)
+        print(packet_forward)
+        print(system(packet_rewrite))
+        print(system(packet_forward))
+
+    
+
+def parse_rewrite(line):
+    # line format:
+    # 1 502 28252 DNAT tcp -- * * 0.0.0.0/0 0.0.0.0/0 tcp dpt:443 /* portforward: 443/tcp -> 192.168.122.5:443 (rewrite to forwarded packet) */ to:192.168.122.5:443
+    #fields = line.split(" ", 12)
+    #index = int(fields[0])
+    #comment = fields[-1]  # wrong, since there is "to:192.168.122.5:443" at the end of the rule
+    index, _ = line.split(" ", 1)
+    index = int(index)
+    _, comment = line.split("/* ")
+    comment, _ = comment.split(" */")
+    # comment format:
+    # portforward: 8000/tcp -> 192.168.122.5:8000 (rewrite to forwarded packet)
+    parts = comment.split(" ", 4)
+    _, source, _, dest, _ = parts
+    source_port, protocol = source.split("/")
+    dest_address, dest_port = dest.split(":")
+
+    rewrite = Rewrite(source_port, dest_address, dest_port, protocol, index)
+    return rewrite
+
+
+def parse_forward(line):
+    # line format:
+    # 6 12024 1342K ACCEPT udp -- * * 0.0.0.0/0 192.168.123.2 udp dpt:53637 /* portforward: 53637/udp -> 192.168.123.2:53637 (accept forwarded packet) */
+    fields = line.split(" ", 12)
+    index = int(fields[0])
+    comment = fields[-1]
+
+    # comment format:
+    # /* portforward: 443/tcp -> 192.168.122.5:443 (accept forwarded packet) */
+
+    # remove /* */
+    comment = comment[3:-3]
+    parts = comment.split(" ", 4)
+    _, source, _, dest, _ = parts
+    source_port, protocol = source.split("/")
+    dest_address, dest_port = dest.split(":")
+
+    forward = Forward(source_port, dest_address, dest_port, protocol, index)
+    return forward
+
+
+def read_iptables():
+    # parse output from iptables
+    list_rewrites = 'iptables -t nat -L PREROUTING -n -v --line-numbers | grep "portforward:" | tr -s " "'
+    list_forwards = 'iptables -L -n -v --line-numbers | grep "portforward:" | tr -s " "'
+
+    out, code = system(list_rewrites)
+    assert code == 0
+    lines = out.split("\n")[:-1]
+    rewrites = [parse_rewrite(line) for line in lines]
+
+    out, code = system(list_forwards)
+    assert code == 0
+    lines = out.split("\n")[:-1]
+    forwards = [parse_forward(line) for line in lines]
+
+    return (rewrites, forwards)
+
+# TODO: organize rules better than this (should be able to find iptables rules from the user-facing port forward rules)
+def sort_rules(rewrites, forwards):
+    # convert iptables rules into a list of port forwarding Rules
+    # rewrites and forwards contain the same information, so forwards are ignored
+    port_forwards = {}  # port -> Rule
+    #iptables = {}  # port -> proto -> [rewrite, forward] (used to find iptables rules from port forward rules)
+    for r in rewrites:
+        #iptables.setdefault(r.src_port, {})
+        #iptables[r.src_port].setdefault(r.protocol, [])
+        #iptables[r.src_port][r.protocol].append(r)
+
+        if r.src_port in port_forwards:
+            port_forwards[r.src_port].protocols.append(r.protocol)
+        else:
+            port_forwards[r.src_port] = Rule(r.src_port, r.dst_address, r.dst_port, [r.protocol])
+    #for f in forwards:
+    #    iptables.setdefault(f.src_port, {})
+    #    iptables[f.src_port].setdefault(f.protocol, [])
+    #    iptables[f.src_port][f.protocol].append(f)
+    return [port_forwards[port] for port in port_forwards]#, iptables
+
+# the "list" command
+def print_rules():
+    rewrites, forwards = read_iptables()
+    rules = sort_rules(rewrites, forwards)
+    for rule in rules:
+        if len(rule.protocols) == 2:
+            print(f"{rule.src_port} -> {rule.dst_address}:{rule.dst_port}")
+        else:
+            #assert len(rule.protocols) == 1
+            print(f"{rule.src_port}/{rule.protocols[0]} -> {rule.dst_address}:{rule.dst_port}")
+
+def parse_del(argv):
+    # TODO: centralize argument syntax parsing ("port ... [to ...:..] [proto ...]")
+    args = parse_port_forward(argv[2:])
+
+    # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
+    #return args
+    return [args["src-port"], args["dst-addr"], args["dst-port"], args["protocols"]]
+
+
+# TODO: cleanup (hide the iptables commands ?) and repeat testing while refactoring
+def remove(src_port, dest_addr, dest_port, protocols):
+    # only take src_port and protocols, but accept more details ("forward.py port ... to ...:.. proto tcp")
+    rewrites, forwards = read_iptables()
+    #rules, by_port = sort_rules(rewrites, forwards)
+    rules = sort_rules(rewrites, forwards)
+    for rule in rules:
+        if src_port == rule.src_port:
+            # check additional filters
+            if dest_addr is not None and rule.dst_address != dest_addr:
+                continue
+            if dest_port is not None and rule.dst_port != dest_port:
+                continue
+
+            for proto in protocols:
+                if proto in rule.protocols:
+                    # TODO: select the iptables rewrite and forward and delete them
+                    # or generate the line from the port forward Rule)
+                    print("found proto", proto)
+                    #iptables_rules = by_port[rule.src_port][proto]
+                    rm_rewrite = f"iptables -t nat -D PREROUTING -p {proto} --dport {rule.src_port} -j DNAT --to {rule.dst_address}:{rule.dst_port} -m comment --comment \"portforward: {rule.src_port}/{proto} -> {rule.dst_address}:{rule.dst_port} (rewrite to forwarded packet)\""
+                    rm_forward = f"iptables -D FORWARD -p {proto} -d {rule.dst_address} --dport {rule.dst_port} -j ACCEPT -m comment --comment \"portforward: {rule.src_port}/{proto} -> {rule.dst_address}:{rule.dst_port} (accept forwarded packet)\""
+                    print(rm_rewrite)
+                    print(rm_forward)
+                    print(system(rm_rewrite))
+                    print(system(rm_forward))
+
+
+
+def usage():
+    print(
+            "usage: forward add|list|del [...args]\n"
+            "\n"
+            "examples:\n"
+            "    forward add port 80 to 192.168.122.5:80 [proto tcp]\n"
+            "    forward list\n"
+            "    forward del port 80 [to 192.168.122.5:80] [proto tcp]"
+    )
+    sys.exit(0)
+
+
+
+def parse_args(argv):
+    """
+    manual arg parsing
+
+    the only accepted argument forms are:
+    forward --help
+    forward help
+    forward add|list|del [...args]
+    """
+    if len(argv) < 2:
+        usage()
+
+    match argv[1]:
+        case "--help" | "help":
+            usage()
+        case "add":
+            add_args = parse_add(argv)
+            return add, add_args
+        case "list":
+            # ignore other arguments for now
+            # TODO: parse forms such as "forward list tcp"
+            return print_rules, []
+        case "del":
+            return remove, parse_del(argv)
+        case default:
+            usage()
+
+if __name__ == "__main__":
+    subcommand, subargs = parse_args(sys.argv)
+    subcommand(*subargs)
+
