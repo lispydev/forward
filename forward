@@ -145,8 +145,24 @@ def add(src_port, dst_addr, dst_port, protocols):
 
         print(packet_rewrite)
         print(packet_forward)
-        print(system(packet_rewrite))
-        print(system(packet_forward))
+        #print(system(packet_rewrite))
+        #print(system(packet_forward))
+        out, code = system(packet_rewrite)
+        if code != 0 or out != '':
+            print('error during port forwarding:')
+            print('return code:', code)
+            print('error:')
+            print(out)
+        out2, code2 = system(packet_forward)
+        print('aborting after', packet_rewrite)
+        return
+        if code2 != 0 or out2 != '':
+            print('error during port forwarding:')
+            print('return code:', code2)
+            print('error:')
+            print(out2)
+        if code == 0 and out == '' and code2 == 0 and out2 == '':
+            print('ok')
 
     
 

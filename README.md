@@ -37,4 +37,5 @@ Todo:
 - package in distros for ease of install
 - hide iptables commands
 - automate tests
+- add iptables integrity checks
 
