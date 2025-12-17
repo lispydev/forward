@@ -128,7 +128,7 @@ def parse_port_forward(argv):
         usage()
 
     if args["dst-port"] == "=src-port":
-        args["dst-port"] == args["src-port"]
+        args["dst-port"] = args["src-port"]
 
     if args["protocol"] is None:
         args["protocols"] = ["tcp", "udp"]
@@ -147,6 +147,7 @@ def parse_add(argv):
 
     # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
     #return args
+    assert args["dst-port"] != "=src-port", "internal integrity check"
     return [args["src-port"], args["dst-addr"], args["dst-port"], args["protocols"], args["src-iface"]]
 
 def add(src_port, dst_addr, dst_port, protocols, src_interface):
