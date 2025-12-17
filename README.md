@@ -28,6 +28,16 @@ sudo forward list
 sudo forward del port 80
 ```
 
+Note:
+when you redirect a port such as 80, it is very important to specify the interface from which the traffic is forwarded.
+For example:
+```sh
+# forward inbound traffic on port 80 to a libvirt VM in the default NAT:
+sudo forward add port 80 to 192.168.122.3:80 from eth0
+```
+Without this, outgoing traffic (from virtual machines, for example) will get forwarded too, which will effectively break internet access.
+
+
 
 # Roadmap
 
