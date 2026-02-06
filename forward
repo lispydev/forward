@@ -170,9 +170,9 @@ def add(src_port, dst_addr, dst_port, protocols, src_interface):
             print('return code:', code)
             print('error:')
             print(out)
+            print('aborting after', packet_rewrite)
+            return
         out2, code2 = system(packet_forward)
-        print('aborting after', packet_rewrite)
-        return
         if code2 != 0 or out2 != '':
             print('error during port forwarding:')
             print('return code:', code2)
