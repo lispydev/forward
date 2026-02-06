@@ -277,7 +277,7 @@ def print_rules():
 def parse_del(argv):
     # TODO: centralize argument syntax parsing ("port ... [to ...:..] [proto ...]")
     args = parse_port_forward(argv[2:])
-    assert argv["src-iface"] is None, "Specifying inbound interface in delete rules is not supported"
+    assert args["src-iface"] is None, "Specifying inbound interface in delete rules is not supported"
 
     # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
     #return args
