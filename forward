@@ -20,11 +20,19 @@ from dataclasses import dataclass
 from subprocess import Popen, PIPE, STDOUT
 
 
+"""
+library
+"""
+
+
 # copy pasted from https://github.com/lispydev/disk-replicator
-# TODO: find a more recent version (ex: the one used in closet)
-# (this one does not merge stdout and stderr)
+# TODO: when stderr is False, merge stderr with stdout
+# (this version just ignores stderr)
 def system(cmd, stdin=None, stderr=False):
-    "stdout[, stderr], errcode = system(command[, stdin][, stderr=True])"
+    """
+    usage:
+    stdout[, stderr], errcode = system(command[, stdin][, stderr=True])
+    """
     # merge stdout and stderr, and return error code instead
     if stdin is not None:
         stdin = stdin.encode()
@@ -76,6 +84,96 @@ class Forward:
 def comment_marker(rule):
     pass
 
+
+"""
+iptables manipulation helpers
+
+these helpers are not safe for user input.
+
+
+
+Some random notes about iptables:
+
+On tables:
+iptables rules are split into tables (filter, nat,...).
+Every iptables command operates on a table,  specified with -t <table>
+if -t is not specified, the default table is filter.
+
+portforward operates on filter and nat tables.
+
+On chains:
+inside a table, rules are sorted into chains.
+inside a chain, rules are executed procedurally.
+while rules can be put into builtin chains such as FORWARD,
+but using dedicated chains helps manageing rules without breaking things.
+
+Some examples of iptables commands:
+iptables -N portforward # create a portforward chain in the filter table
+"""
+
+
+# helper for building iptables commands
+def scope(name="filter"):
+    if name is None:
+        name = "filter"
+    return f"-t {name}"
+
+def chain_exists(name, table=None):
+    cmd = f"iptables {scope(table)} -L {name}"
+    #print(cmd)
+    out, code = system(cmd)
+    success = (code == 0)
+    return success
+
+def create_chain(name, table=None):
+    #if not chain_exists(name, table):
+    cmd = f"iptables {scope(table)} -N {name}"
+    out, code = system(cmd)
+    return (code == 0)
+
+# will not delete the chain if there are rules or jumps using it
+# the chain can be emptied by flushing with iptables -F {chain}
+def delete_chain(name, table=None):
+    cmd = f"iptables {scope(table)} -X {name}"
+    out, code = system(cmd)
+    return (code == 0)
+
+# tests used while writing the code
+#print(create_chain("portforward"))
+#print(create_chain("portforward"))
+#print(chain_exists("portforward"))
+#print(delete_chain("portforward"))
+
+def init_chains():
+    if not chain_exists("portforward"):
+        create_chain("portforward")
+    if not chain_exists("portforward", table="nat"):
+        create_chain("portforward", "nat")
+
+def cleanup_chains():
+    if chain_exists("portforward"):
+        delete_chain("portforward")
+    if chain_exists("portforward", table="nat"):
+        delete_chain("portforward", "nat")
+    assert not chain_exists("portforward")
+    assert not chain_exists("portforward", "nat")
+
+
+
+#print(chain_exists("portforward"))
+#print(chain_exists("portforward", "nat"))
+#init_chains()
+#print(chain_exists("portforward"))
+#print(chain_exists("portforward", "nat"))
+#cleanup_chains()
+#print(chain_exists("portforward"))
+#print(chain_exists("portforward", "nat"))
+
+
+
+"""
+arg parsing
+"""
 
 # argument parsing ("add port ... to ...:... proto ...", "del port ...")
 def parse_port_forward(argv):
