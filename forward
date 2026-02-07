@@ -84,7 +84,7 @@ def parse_port_forward(argv):
         "dst-addr": None,
         "dst-port": None,
         "protocol": None,
-        "src-iface": None,
+        #"src-iface": None,
     }
     i = 0
     while i < len(argv):
@@ -106,17 +106,17 @@ def parse_port_forward(argv):
                 # set after finishing arg parsing
                 args["dst-port"] = "=src-port"
             i += 2
-        elif kw == "from":
-            src_interface = argv[i + 1]
-            # list the physical interfaces
-            interfaces = system("ip -o link show | cut -d ':' -f 2")[0]
-            interfaces = interfaces.split("\n")[:-1]
-            interfaces = [line.strip() for line in interfaces]
-            if src_interface in interfaces:
-                args["src-iface"] = src_interface
-            else:
-                raise ValueError(f"Unknown interface: {src_interface}, expected one among {interfaces}")
-            i += 2
+        #elif kw == "from":
+        #    #src_interface = argv[i + 1]
+        #    # list the physical interfaces
+        #    interfaces = system("ip -o link show | cut -d ':' -f 2")[0]
+        #    interfaces = interfaces.split("\n")[:-1]
+        #    interfaces = [line.strip() for line in interfaces]
+        #    if src_interface in interfaces:
+        #        args["src-iface"] = src_interface
+        #    else:
+        #        raise ValueError(f"Unknown interface: {src_interface}, expected one among {interfaces}")
+        #    i += 2
         else:
             print(f"Error: Unexpected argument '{kw}'")
             usage()
@@ -148,16 +148,17 @@ def parse_add(argv):
     # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
     #return args
     assert args["dst-port"] != "=src-port", "internal integrity check"
-    return [args["src-port"], args["dst-addr"], args["dst-port"], args["protocols"], args["src-iface"]]
+    return [args["src-port"], args["dst-addr"], args["dst-port"], args["protocols"]]#, args["src-iface"]]
 
-def add(src_port, dst_addr, dst_port, protocols, src_interface):
+def add(src_port, dst_addr, dst_port, protocols):
     for proto in protocols:
         comment_marker = f"portforward: {src_port}/{proto} -> {dst_addr}:{dst_port}"  # used to recognize rules created by this program and identify them
-        if src_interface is not None:
-            iface_spec = f"-i {src_interface}"
-        else:
-            iface_spec = ""
-        packet_rewrite = f"iptables -t nat -I PREROUTING {iface_spec} -p {proto} --dport {src_port} -j DNAT --to {dst_addr}:{dst_port} -m comment --comment \"{comment_marker} (rewrite to forwarded packet)\""
+        #if src_interface is not None:
+        #    iface_spec = f"-i {src_interface}"
+        #else:
+        #    iface_spec = ""
+        #packet_rewrite = f"iptables -t nat -I PREROUTING {iface_spec} -p {proto} --dport {src_port} -j DNAT --to {dst_addr}:{dst_port} -m comment --comment \"{comment_marker} (rewrite to forwarded packet)\""
+        packet_rewrite = f"iptables -t nat -I PREROUTING -p {proto} --dport {src_port} -j DNAT --to {dst_addr}:{dst_port} -m comment --comment \"{comment_marker} (rewrite to forwarded packet)\""
         packet_forward = f"iptables -I FORWARD -p {proto} -d {dst_addr} --dport {dst_port} -j ACCEPT -m comment --comment \"{comment_marker} (accept forwarded packet)\""
 
         print(packet_rewrite)
@@ -184,8 +185,12 @@ def add(src_port, dst_addr, dst_port, protocols, src_interface):
     
 
 def parse_rewrite(line):
+    print(line)
     # line format:
     # 1 502 28252 DNAT tcp -- * * 0.0.0.0/0 0.0.0.0/0 tcp dpt:443 /* portforward: 443/tcp -> 192.168.122.5:443 (rewrite to forwarded packet) */ to:192.168.122.5:443
+    # TODO: new format:
+    # 1 502 28252 DNAT tcp -- eno1 * * 0.0.0.0/0 0.0.0.0/0 tcp dpt:443 /* portforward: 443/tcp -> 192.168.122.5:443 (rewrite to forwarded packet) */ to:192.168.122.5:443
+    # TODO: improve comments with interface annotations
     #fields = line.split(" ", 12)
     #index = int(fields[0])
     #comment = fields[-1]  # wrong, since there is "to:192.168.122.5:443" at the end of the rule
@@ -277,7 +282,7 @@ def print_rules():
 def parse_del(argv):
     # TODO: centralize argument syntax parsing ("port ... [to ...:..] [proto ...]")
     args = parse_port_forward(argv[2:])
-    assert args["src-iface"] is None, "Specifying inbound interface in delete rules is not supported"
+    #assert args["src-iface"] is None, "Specifying inbound interface in delete rules is not supported"
 
     # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
     #return args
@@ -318,7 +323,7 @@ def usage():
             "usage: forward add|list|del [...args]\n"
             "\n"
             "examples:\n"
-            "    forward add port 80 to 192.168.122.5:80 [proto tcp] [from eth0]\n"
+            "    forward add port 80 to 192.168.122.5:80 [proto tcp]\n"
             "    forward list\n"
             "    forward del port 80 [to 192.168.122.5:80] [proto tcp]"
     )
