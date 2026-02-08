@@ -98,6 +98,12 @@ On tables:
 iptables rules are split into tables (filter, nat,...).
 Every iptables command operates on a table,  specified with -t <table>
 if -t is not specified, the default table is filter.
+with iptables, available tables are hardcoded by the kernel:
+    filter
+    nat
+    mangle
+    raw
+    security (SELinux)
 
 portforward operates on filter and nat tables.
 
@@ -106,9 +112,110 @@ inside a table, rules are sorted into chains.
 inside a chain, rules are executed procedurally.
 while rules can be put into builtin chains such as FORWARD,
 but using dedicated chains helps manageing rules without breaking things.
+The builtin chains and custom ones behave differently.
+
+Builtin chains:
+builtin chains have a policy for packets that match no rule. By default, this policy is always ACCEPT, but it can be changed by software (ufw sets the filter policy to DROP for input and forward trafic).
+The builtin chains are:
+    in the filter table:
+        INPUT
+        FORWARD
+        OUTPUT
+    in the nat table
+        PREROUTING
+        INPUT
+        OUTPUT
+        POSTROUTING
+    mangle:
+        PREROUTING
+        INPUT
+        FORWARD
+        OUTPUT
+        POSTROUTING
+    raw:
+        PREROUTING
+        OUTPUT
+    security:
+        INPUT
+        FORWARD
+        OUTPUT
+Policies can be:
+    ACCEPT
+    DROP
+    REJECT (same as drop, but sends an error response with ICMP or TCP reset)
+    (More detailed behaviour is possible within rules, where the "target" is the action done on the packet)
+
+The policy of a builtin chain can be set with iptables -P <chain> <policy>
+
+
+Custom chains:
+Custom chains can be hooked to other chains so that their rules are executed as part of the parent chain, with a jump.
+For example: iptables -t filter -A INPUT -j on-input-rules
+Rules in custom chains are executed in order, and can RETURN to the parent chainto interrupt execution
+Example: iptables -A on-input-rules -j RETURN
+Chain jumps are actually just rules with a chain as their target, so it is possible to make conditional logic by adding filters on the jump rules
+Example: iptables -A INPUT -p tcp -dport 22 -j ssh-chain
+Though the applications seem limited to packet-level logic (i can't see any use for loops, for example)
+
+For higher level stateful packet processing, see NFQUEUE (allows sending the packet to a userspace program to decide what to do with it).
+
+
+On rules:
+A rule must always have a target to jump to (-j).
+Without explicit filters, a rule matches everything going through it and always executes.
+Iptables accepts a rule description after these commands:
+    -A append (most common, appends a rule at the end of a chain)
+    -I insert (-I <chain> [<position>])
+    -R replace
+    -D delete
+Minimal rule definition examples:
+    iptables -A my-chain -j ACCEPT
+    which means: accept all packets sent to my-chain in the filter table
+    iptables -A my-chain -j RETURN
+    which means: after doing everything in my-chain, return
+        note: this is already the default behavior of iptables, so this rule is a no-op
+
+
+
 
 Some examples of iptables commands:
+chain management:
 iptables -N portforward # create a portforward chain in the filter table
+iptables -X portforward # delete it
+iptables -t nat -N portforward # same, but in the nat table
+iptables -X portforward -t nat
+
+iptables -P INPUT DROP  # drop all incoming packets (set by ufw)
+iptables -P FORWARD DROP  # drop all packets to route (set by ufw)
+
+The policy of a builtin chain can be set with iptables -P <chain> <policy>
+
+Rules:
+iptables -A <chain> -j <target> # adding a rule
+Jump rules:
+iptables -A some-chain -j my-new-chain
+
+Other actions can be considered as just jumps to builtin targets:
+iptables -A my-chain -j ACCEPT  # accept packets sent through my-chain
+iptables -A my-chain -j RETURN  # return from my-chain
+iptables -I my-chain 3 -j RETURN  # insert an early return at position 3
+    note: rules are indexed starting at 1
+    (-I my-chain without an index is the same as -I my-chain 1)
+
+Filters and target arguments are sent as cli parameters:
+# the rule applies to packets with a destination port 22 that are marked with 1
+# and rejects them with a tcp-reset answer
+iptables -t mangle -A PREROUTING --dport 22 -m mark --mark 1 -j REJECT --reject-with tcp-reset
+
+Replace:
+iptables -R my-chain 2 -j DROP  # replace the 2nd rule in my-chain with a new drop rule
+
+Deletion:
+iptables -D my-chain 2  # delete the second rule
+iptables -D my-chain -p tcp -j ACCEPT  # delete the rule by describing it exactly
+
+
+
 """
 
 
@@ -168,6 +275,26 @@ def cleanup_chains():
 #cleanup_chains()
 #print(chain_exists("portforward"))
 #print(chain_exists("portforward", "nat"))
+
+def jump(chain):
+    return f"-j {chain}"
+
+def append(chain):
+    return f"-A {chain}"
+
+def insert(chain, position=1):
+    if position is None:
+        position = 1
+    return f"-I {chain} {position}"
+
+
+# insert chains into filter/FORWARD and nat/PREROUTING
+def insert_chain(where, chain, table=None):
+    cmd = f"iptables {scope(table)} {insert(where)} {jump(chain)}"
+    print(cmd)
+
+#print(insert_chain("FORWARD", "portforward"))
+#print(insert_chain("PREROUTING", "portforward", "nat"))
 
 
 
