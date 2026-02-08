@@ -168,12 +168,18 @@ Iptables accepts a rule description after these commands:
     -I insert (-I <chain> [<position>])
     -R replace
     -D delete
-Minimal rule definition examples:
+Basic rule definition examples:
     iptables -A my-chain -j ACCEPT
     which means: accept all packets sent to my-chain in the filter table
     iptables -A my-chain -j RETURN
     which means: after doing everything in my-chain, return
         note: this is already the default behavior of iptables, so this rule is a no-op
+For more advanced rules, most filtering features must be explicitely loaded with -m <module> before using it:
+        -m tcp (tcp options: ports, flags)
+        -m udp (udp options: ports)
+        -m mac (mac address)
+        -m state (connection state: NEW or ESTABLISHED)
+        ...
 
 
 
@@ -251,30 +257,28 @@ def delete_chain(name, table=None):
 #print(chain_exists("portforward"))
 #print(delete_chain("portforward"))
 
-def init_chains():
-    if not chain_exists("portforward"):
-        create_chain("portforward")
-    if not chain_exists("portforward", table="nat"):
-        create_chain("portforward", "nat")
 
-def cleanup_chains():
-    if chain_exists("portforward"):
-        delete_chain("portforward")
-    if chain_exists("portforward", table="nat"):
-        delete_chain("portforward", "nat")
-    assert not chain_exists("portforward")
-    assert not chain_exists("portforward", "nat")
+"""
+Dataclass wrapper over IPTables rules
+"""
 
+# TODO: add options as needed
+class IptablesRule:
+    jump_target: str
 
+    def __str__(self):
+        return f"-j {self.jump_target}"
 
-#print(chain_exists("portforward"))
-#print(chain_exists("portforward", "nat"))
-#init_chains()
-#print(chain_exists("portforward"))
-#print(chain_exists("portforward", "nat"))
-#cleanup_chains()
-#print(chain_exists("portforward"))
-#print(chain_exists("portforward", "nat"))
+    # TODO: find a better API
+    # for now, use functions
+    #def insert_at(self, chain, position=None, table=None):
+    #    return f"-t {scope(table)} -A {chain} {str(self)}"
+
+    def append_to(self, chain, table=None):
+        return f"-t {scope(table)} -A {chain} {str(self)}"
+
+    def delete_from(self, chain, table=None):
+        return f"-t {scope(table)} -D {chain} {str(self)}"
 
 def jump(chain):
     return f"-j {chain}"
@@ -287,14 +291,75 @@ def insert(chain, position=1):
         position = 1
     return f"-I {chain} {position}"
 
+# delete rule by index
+# TODO: never use this, as this is more error-prone than delete()
+def delete_index(chain, position):
+    return f"-D {chain} {position}"
+
+# delete rule by rule spec
+# (helper for command generation)
+def delete(chain):
+    return f"-D {chain}"
+
 
 # insert chains into filter/FORWARD and nat/PREROUTING
-def insert_chain(where, chain, table=None):
+def insert_chain_jump(where, chain, table=None):
     cmd = f"iptables {scope(table)} {insert(where)} {jump(chain)}"
-    print(cmd)
+    #print(cmd)
+    out, code = system(cmd)
+    return code == 0
 
-#print(insert_chain("FORWARD", "portforward"))
-#print(insert_chain("PREROUTING", "portforward", "nat"))
+def delete_chain_jump(where, chain, table=None):
+    cmd = f"iptables {scope(table)} {delete(where)} {jump(chain)}"
+    #print(cmd)
+    out, code = system(cmd)
+    return code == 0
+
+
+#print(create_chain("portforward"))
+#print(insert_chain_jump("FORWARD", "portforward"))
+#print(delete_chain("portforward"))
+
+#print(create_chain("portforward", "nat"))
+#print(insert_chain_jump("PREROUTING", "portforward", "nat"))
+#print(delete_chain("portforward"))
+
+
+def define_chains():
+    if not chain_exists("portforward"):
+        create_chain("portforward")
+        assert chain_exists("portforward")
+        insert_chain_jump("FORWARD", "portforward")
+    if not chain_exists("portforward", table="nat"):
+        create_chain("portforward", "nat")
+        assert chain_exists("portforward", "nat")
+        insert_chain_jump("PREROUTING", "portforward", "nat")
+
+def remove_chains():
+    if chain_exists("portforward"):
+        #cmd = f"iptables -D FORWARD -t filter -j portforward"
+        delete_chain_jump("FORWARD", "portforward")
+        delete_chain("portforward")
+    if chain_exists("portforward", table="nat"):
+        delete_chain_jump("PREROUTING", "portforward", "nat")
+        delete_chain("portforward", "nat")
+    assert not chain_exists("portforward")
+    assert not chain_exists("portforward", "nat")
+
+
+#print(chain_exists("portforward"))
+#print(chain_exists("portforward", "nat"))
+#define_chains()
+#print(chain_exists("portforward"))
+#print(chain_exists("portforward", "nat"))
+#remove_chains()
+#print(chain_exists("portforward"))
+#print(chain_exists("portforward", "nat"))
+
+
+
+
+
 
 
 
