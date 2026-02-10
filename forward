@@ -245,10 +245,17 @@ def create_chain(name, table=None):
     return (code == 0)
 
 # will not delete the chain if there are rules or jumps using it
-# the chain can be emptied by flushing with iptables -F {chain}
+# (empty the chain first with empty_chain(), and remove the chain jumps)
 def delete_chain(name, table=None):
     cmd = f"iptables {scope(table)} -X {name}"
     out, code = system(cmd)
+    return (code == 0)
+
+def empty_chain(name, table=None):
+    cmd = f"iptables {scope(table)} -F {name}"
+    #print(cmd)
+    out, code = system(cmd)
+    #print(out, code)
     return (code == 0)
 
 # tests used while writing the code
@@ -358,7 +365,75 @@ def remove_chains():
 
 
 
+"""
+status management
 
+operations:
+    -get status (enabled or disabled)
+    -enable
+    -disable
+
+TODO:
+    -persistence of enable (with a service ?)
+    -database of rules to enable during activation
+    -flush all rules on disable
+    -restore/remove rules
+"""
+
+# Database operations
+
+# TODO: use posix paths (/var/lib/portforward,...)
+db_path = "ports.json"
+
+default_config = {
+    "enabled": False,
+    "ports": [],
+}
+
+def read_db():
+    if not os.path.exists(db_path):
+        return default_config
+    with open(db_path) as f:
+        return json.load(f)
+
+def write_db(config):
+    with open(db_path, "w") as f:
+        json.dump(f, config)
+
+
+# high level iptables and db operations
+
+
+
+# check if chains are defined
+def is_enabled():
+    return chain_exists("portforward")
+
+# edit the database
+def set_enabled(enabled: bool):
+    config = read_db()
+    config["enabled"] = enabled
+    write_db(config)
+
+def enable():
+    define_chains()
+    # TODO: define rules
+
+def disable():
+    # cleanup rules
+    if chain_exists("portforward"):
+        assert empty_chain("portforward")
+    if chain_exists("portforward", "nat"):
+        assert empty_chain("portforward", "nat")
+    # cleanup chains
+    remove_chains()
+
+
+#print(is_enabled())
+#enable()
+#print(is_enabled())
+#disable()
+#print(is_enabled())
 
 
 
