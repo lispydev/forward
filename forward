@@ -531,10 +531,23 @@ def read_port_forwards():
 
 
 def enable():
+    # TODO: refactor
+    # TODO: use /etc/sysctl.d/ to make this setting persistent (instead of modifying the system at runtime)
+    # check localnet routing, needed for localhost->localhost:<forwarded port>-><destination>:<port> traffic
+    read_cmd = "sysctl net.ipv4.conf.all.route_localnet"
+    out, code = system(read_cmd)
+    assert code == 0, "critical error (aborting before modifying the system)"
+    if out == "net.ipv4.conf.all.route_localnet = 0\n":
+        print("enabling localhost routing (so that localhost:<port> is routed to the destination)")
+        write_cmd = "sysctl -w net.ipv4.conf.all.route_localnet=1"
+        out, code = system(write_cmd)
+        assert code == 0, "critical error (aborting now before modifying the system)"
+
     if is_enabled():
         # TODO: update rules (fix them if needed) without removing them ?
         # there is currently no self-repair mechanism, and no known case of rule corruption that cannot be fixed by simply restarting the port forwarding
         return
+
     port_forwards = read_port_forwards()
     define_chains()
     for p in port_forwards:
