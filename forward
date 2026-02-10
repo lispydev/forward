@@ -15,6 +15,9 @@ Please note that port forwarding will ignore firewall rules created with ufw.
 # (without this, port forwarding only works if the forwarding machine is the gateway, since trafic will still be marked as coming from the original source)
 
 import sys
+import os
+import json
+
 from dataclasses import dataclass
 
 from subprocess import Popen, PIPE, STDOUT
@@ -290,6 +293,7 @@ class IptablesRule:
 def jump(chain):
     return f"-j {chain}"
 
+# TODO: include scope() ?
 def append(chain):
     return f"-A {chain}"
 
@@ -405,6 +409,39 @@ def write_db(config):
 
 
 
+# NAT the matching packets to the destination
+# packets match if they have the correct protocol, destination port, and target a local IP address as their destination
+# append is used (instead of insert) so that new rules do not break existing ones (though this should be detected by input validation)
+def port_rewrite(source_port, destination_address, destination_port, protocol):
+    cmd = f"iptables {scope('nat')} {append('portforward')} -m addrtype --dst-type LOCAL -p {protocol} --dport {source_port} -j DNAT --to {destination_address}:{destination_port}"
+    #print(cmd)
+    out, code = system(cmd)
+    #print(out, code)
+    return (code == 0)
+
+# accept the forwarding of the packet
+def port_forward(source_port, destination_address, destination_port, protocol):
+    cmd = f"iptables {append('portforward')} -p {protocol} -d {destination_address} --dport {destination_port} -j ACCEPT"
+    #print(cmd)
+    out, code = system(cmd)
+    #print(out, code)
+    return (code == 0)
+
+# local traffic does not go through the PREROUTING chain
+# instead, use the OUTPUT table to redirect from localhost to the destination
+# TODO: sysctl -w net.ipv4.conf.all.route_localnet=1 to allow local traffic to go outside
+def port_forward_local(source_port, destination_address, destination_port, protocols):
+    # example: iptables -t nat -A OUTPUT -p tcp -d 127.0.0.1 --dport {src_port} -j DNAT --to-destination {dest_addr}:{dest_port}
+    pass
+
+# make the source of the traffic appear to be the port forwarding machine for the destination
+# helps routing back the traffic when the source is localhost (without that, the destination seems to try to route back to localhost)
+# TODO: try -o lo (interface localhost), -s 127.0.0.1 (source ip localhost) as filters ? masquerade does not seem to disrupt other traffic, but should not be applied when not needed
+def nat_masquerade():
+    # example: iptables -t nat -A POSTROUTING -m addrtype --src-type LOCAL -d {destination_addr} -p tcp --dport {dest_port} -j MASQUERADE
+    pass
+
+
 # check if chains are defined
 def is_enabled():
     return chain_exists("portforward")
@@ -416,8 +453,47 @@ def set_enabled(enabled: bool):
     write_db(config)
 
 def enable():
+    if is_enabled():
+        # TODO: update rules (fix them if needed) without removing them ?
+        # there is currently no self-repair mechanism, and no known case of rule corruption that cannot be fixed by simply restarting the port forwarding
+        return
+    # TODO: refactor into a parse_db() function
+    # the parsing must be finished before doing anything with iptables
+    config = read_db()
+    rules = []
+    for source_port, destination in config["ports"].items():
+        protocols = []
+        # parse protocols
+        result = destination.split("/")
+        if len(result) == 1:
+            protocols = ["udp", "tcp"]
+        elif len(result) == 2:
+            protocols = [result[1]]
+            destination = result[0]
+        else:
+            raise ValueError("Error when parsing the database")
+
+        # parse the port
+        result = destination.split(":")
+        if len(result) == 1:
+            destination_ip = destination
+            destination_port = source_port
+        elif len(result) == 2:
+            destination_ip = result[0]
+            destination_port = result[1]
+        else:
+            raise ValueError("Error when parsing the database")
+
+        rules.append([source_port, destination_ip, destination_port, protocols])
+    #print(rules)
     define_chains()
-    # TODO: define rules
+    for rule in rules:
+        print(rule)
+        (src_port, dest_ip, dest_port, protocols) = rule
+        for protocol in protocols:
+            port_rewrite(src_port, dest_ip, dest_port, protocol)
+            port_forward(src_port, dest_ip, dest_port, protocol)
+
 
 def disable():
     # cleanup rules
