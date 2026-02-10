@@ -341,10 +341,23 @@ def define_chains():
         create_chain("portforward")
         assert chain_exists("portforward")
         insert_chain_jump("FORWARD", "portforward")
+    # NAT the traffic and rewrite the destination
     if not chain_exists("portforward", table="nat"):
         create_chain("portforward", "nat")
         assert chain_exists("portforward", "nat")
         insert_chain_jump("PREROUTING", "portforward", "nat")
+    # rules for local traffic
+    if not chain_exists("portforward-local", table="nat"):
+        create_chain("portforward-local", "nat")
+        assert chain_exists("portforward-local", "nat")
+        insert_chain_jump("OUTPUT", "portforward-local", "nat")
+    # rewrite the source for the destination when the source is localhost
+    # (DNAT does not do this on its own)
+    if not chain_exists("portforward-masquerade", table="nat"):
+        create_chain("portforward-masquerade", "nat")
+        assert chain_exists("portforward-masquerade", "nat")
+        insert_chain_jump("POSTROUTING", "portforward-masquerade", "nat")
+
 
 def remove_chains():
     if chain_exists("portforward"):
@@ -354,8 +367,16 @@ def remove_chains():
     if chain_exists("portforward", table="nat"):
         delete_chain_jump("PREROUTING", "portforward", "nat")
         delete_chain("portforward", "nat")
+    if chain_exists("portforward-local", table="nat"):
+        delete_chain_jump("OUTPUT", "portforward-local", "nat")
+        delete_chain("portforward-local", "nat")
+    if chain_exists("portforward-masquerade", table="nat"):
+        delete_chain_jump("POSTROUTING", "portforward-masquerade", "nat")
+        delete_chain("portforward-masquerade", "nat")
     assert not chain_exists("portforward")
     assert not chain_exists("portforward", "nat")
+    assert not chain_exists("portforward-local", "nat")
+    assert not chain_exists("portforward-masquerade", "nat")
 
 
 #print(chain_exists("portforward"))
@@ -427,17 +448,22 @@ def port_forward(source_port, destination_address, destination_port, protocol):
     #print(out, code)
     return (code == 0)
 
+# custom rule for local traffic (from localhost to localhost)
 # local traffic does not go through the PREROUTING chain
 # instead, use the OUTPUT table to redirect from localhost to the destination
-# TODO: sysctl -w net.ipv4.conf.all.route_localnet=1 to allow local traffic to go outside
-def port_forward_local(source_port, destination_address, destination_port, protocols):
+# TODO: test sysctl -w net.ipv4.conf.all.route_localnet=1 to allow local traffic to go outside
+def port_forward_local(source_port, destination_address, destination_port, protocol):
     # example: iptables -t nat -A OUTPUT -p tcp -d 127.0.0.1 --dport {src_port} -j DNAT --to-destination {dest_addr}:{dest_port}
+    cmd = f"iptables {scope('nat')} {append('portforward-local')} -p {protocol} -d 127.0.0.1 --dport {source_port} -j DNAT --to-destination {destination_address}:{destination_port}"
+    print(cmd)
+    out, code = system(cmd)
+    print(out, code)
     pass
 
 # make the source of the traffic appear to be the port forwarding machine for the destination
 # helps routing back the traffic when the source is localhost (without that, the destination seems to try to route back to localhost)
 # TODO: try -o lo (interface localhost), -s 127.0.0.1 (source ip localhost) as filters ? masquerade does not seem to disrupt other traffic, but should not be applied when not needed
-def nat_masquerade():
+def nat_masquerade(source_port, destination_address, destination_port, protocol):
     # example: iptables -t nat -A POSTROUTING -m addrtype --src-type LOCAL -d {destination_addr} -p tcp --dport {dest_port} -j MASQUERADE
     pass
 
@@ -512,11 +538,15 @@ def enable():
     port_forwards = read_port_forwards()
     define_chains()
     for p in port_forwards:
-        print(p)
+        #print(p)
         for protocol in p.protocols:
             port_rewrite(p.source_port, p.destination_address,
                          p.destination_port, protocol)
             port_forward(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
+            port_forward_local(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
+            nat_masquerade(p.source_port, p.destination_address,
                          p.destination_port, protocol)
 
 
@@ -526,6 +556,10 @@ def disable():
         assert empty_chain("portforward")
     if chain_exists("portforward", "nat"):
         assert empty_chain("portforward", "nat")
+    if chain_exists("portforward-local", "nat"):
+        assert empty_chain("portforward-local", "nat")
+    if chain_exists("portforward-masquerade", "nat"):
+        assert empty_chain("portforward-masquerade", "nat")
     # cleanup chains
     remove_chains()
 
