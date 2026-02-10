@@ -8,12 +8,6 @@ Please note that port forwarding will ignore firewall rules created with ufw.
 
 # TODO: validate input (in parse_port_forward)
 
-# TODO: allow specifying outgoing interface
-# iptables syntax: iptables -I FORWARD -o virbr1 -p udp -d $GUEST_IP --dport $GUEST_PORT -j ACCEPT
-
-# TODO: when the interface is set, add a nat MASQUERADE rule to tag the trafic as coming from this machine ?
-# (without this, port forwarding only works if the forwarding machine is the gateway, since trafic will still be marked as coming from the original source)
-
 import sys
 import os
 import json
@@ -454,18 +448,24 @@ def port_forward(source_port, destination_address, destination_port, protocol):
 # TODO: test sysctl -w net.ipv4.conf.all.route_localnet=1 to allow local traffic to go outside
 def port_forward_local(source_port, destination_address, destination_port, protocol):
     # example: iptables -t nat -A OUTPUT -p tcp -d 127.0.0.1 --dport {src_port} -j DNAT --to-destination {dest_addr}:{dest_port}
-    cmd = f"iptables {scope('nat')} {append('portforward-local')} -p {protocol} -d 127.0.0.1 --dport {source_port} -j DNAT --to-destination {destination_address}:{destination_port}"
-    print(cmd)
+    cmd = f"iptables {scope('nat')} {append('portforward-local')} -p {protocol} -m addrtype --dst-type LOCAL --dport {source_port} -j DNAT --to-destination {destination_address}:{destination_port}"
     out, code = system(cmd)
-    print(out, code)
-    pass
+    return (code == 0)
+
+
+# packets that were sent through portforward-local must be masqueraded so that the localhost source ip address is replaced by the host machine
+# here, MASQUERADE is applied to all traffic going from the host (local traffic) to the destination of a port forward
+# this includes forwarded traffic that went through the OUTPUT/portforward-local chain, but also includes normal traffic sent to the destination, such as:
+# curl <destination_ip>:<destination_port>
+# in this case, MASQUERADE incurs a small performance cost for (S)NAT-ing the local ip address with itself, but I found no better way to fix the local->local traffic that did not involve future maintenance or bugs.
 
 # make the source of the traffic appear to be the port forwarding machine for the destination
 # helps routing back the traffic when the source is localhost (without that, the destination seems to try to route back to localhost)
-# TODO: try -o lo (interface localhost), -s 127.0.0.1 (source ip localhost) as filters ? masquerade does not seem to disrupt other traffic, but should not be applied when not needed
 def nat_masquerade(source_port, destination_address, destination_port, protocol):
     # example: iptables -t nat -A POSTROUTING -m addrtype --src-type LOCAL -d {destination_addr} -p tcp --dport {dest_port} -j MASQUERADE
-    pass
+    cmd = f"iptables {scope('nat')} {append('portforward-masquerade')} -m addrtype --src-type LOCAL -d {destination_address} -p {protocol} --dport {destination_port} -j MASQUERADE"
+    out, code = system(cmd)
+    return (code == 0)
 
 
 # check if chains are defined
