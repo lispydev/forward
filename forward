@@ -452,15 +452,24 @@ def set_enabled(enabled: bool):
     config["enabled"] = enabled
     write_db(config)
 
-def enable():
-    if is_enabled():
-        # TODO: update rules (fix them if needed) without removing them ?
-        # there is currently no self-repair mechanism, and no known case of rule corruption that cannot be fixed by simply restarting the port forwarding
-        return
-    # TODO: refactor into a parse_db() function
-    # the parsing must be finished before doing anything with iptables
+@dataclass
+class PortForward:
+    source_port: int
+    destination_address: str
+    destination_port: int
+    protocols: list
+
+    # TODO: validate user input, not the database itself
+    #def validate(self):
+    #    for p in self.protocols:
+    #        assert p in ["tcp", "udp"]
+    #    assert 0 < self.source_port < 65_535
+    #    assert 0 < self.destination_port < 65_535
+    #    assert r'(\d{2,3}\.){3}\d{2,3}'.match(self.destination_address)
+
+def read_port_forwards():
     config = read_db()
-    rules = []
+    ports = []
     for source_port, destination in config["ports"].items():
         protocols = []
         # parse protocols
@@ -476,23 +485,39 @@ def enable():
         # parse the port
         result = destination.split(":")
         if len(result) == 1:
-            destination_ip = destination
+            destination_address = destination
             destination_port = source_port
         elif len(result) == 2:
-            destination_ip = result[0]
+            destination_address = result[0]
             destination_port = result[1]
         else:
             raise ValueError("Error when parsing the database")
 
-        rules.append([source_port, destination_ip, destination_port, protocols])
-    #print(rules)
+        ports.append(PortForward(
+            source_port=source_port,
+            destination_address=destination_address,
+            destination_port=destination_port,
+            protocols=protocols,
+        ))
+
+    return ports
+
+
+
+def enable():
+    if is_enabled():
+        # TODO: update rules (fix them if needed) without removing them ?
+        # there is currently no self-repair mechanism, and no known case of rule corruption that cannot be fixed by simply restarting the port forwarding
+        return
+    port_forwards = read_port_forwards()
     define_chains()
-    for rule in rules:
-        print(rule)
-        (src_port, dest_ip, dest_port, protocols) = rule
-        for protocol in protocols:
-            port_rewrite(src_port, dest_ip, dest_port, protocol)
-            port_forward(src_port, dest_ip, dest_port, protocol)
+    for p in port_forwards:
+        print(p)
+        for protocol in p.protocols:
+            port_rewrite(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
+            port_forward(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
 
 
 def disable():
