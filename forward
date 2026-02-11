@@ -472,6 +472,20 @@ def nat_masquerade(source_port, destination_address, destination_port, protocol)
 def is_enabled():
     return chain_exists("portforward")
 
+
+def is_localnet_routing_enabled():
+    # check localnet routing, needed for localhost->localhost:<forwarded port>-><destination>:<port> traffic
+    read_cmd = "sysctl net.ipv4.conf.all.route_localnet"
+    out, code = system(read_cmd)
+    assert code == 0, "critical error (aborting before modifying the system)"
+    return (out == "net.ipv4.conf.all.route_localnet = 1\n")
+
+# TODO: use /etc/sysctl.d/ to make this setting persistent (instead of modifying the system at runtime)
+def enable_localnet_routing():
+    write_cmd = "sysctl -w net.ipv4.conf.all.route_localnet=1"
+    out, code = system(write_cmd)
+    assert code == 0, "critical error (aborting now before modifying the system)"
+
 # edit the database
 def set_enabled(enabled: bool):
     config = read_db()
@@ -531,17 +545,9 @@ def read_port_forwards():
 
 
 def enable():
-    # TODO: refactor
-    # TODO: use /etc/sysctl.d/ to make this setting persistent (instead of modifying the system at runtime)
-    # check localnet routing, needed for localhost->localhost:<forwarded port>-><destination>:<port> traffic
-    read_cmd = "sysctl net.ipv4.conf.all.route_localnet"
-    out, code = system(read_cmd)
-    assert code == 0, "critical error (aborting before modifying the system)"
-    if out == "net.ipv4.conf.all.route_localnet = 0\n":
+    if not is_localnet_routing_enabled():
         print("enabling localhost routing (so that localhost:<port> is routed to the destination)")
-        write_cmd = "sysctl -w net.ipv4.conf.all.route_localnet=1"
-        out, code = system(write_cmd)
-        assert code == 0, "critical error (aborting now before modifying the system)"
+        enable_localnet_routing()
 
     if is_enabled():
         # TODO: update rules (fix them if needed) without removing them ?
