@@ -387,16 +387,12 @@ def remove_chains():
 """
 status management
 
-operations:
+operations implemented here:
     -get status (enabled or disabled)
     -enable
     -disable
 
-TODO:
-    -persistence of enable (with a service ?)
-    -database of rules to enable during activation
-    -flush all rules on disable
-    -restore/remove rules
+TODO: implement persistence
 """
 
 # Database operations
@@ -468,10 +464,6 @@ def nat_masquerade(source_port, destination_address, destination_port, protocol)
     return (code == 0)
 
 
-# check if chains are defined
-def is_enabled():
-    return chain_exists("portforward")
-
 
 def is_localnet_routing_enabled():
     # check localnet routing, needed for localhost->localhost:<forwarded port>-><destination>:<port> traffic
@@ -484,13 +476,25 @@ def is_localnet_routing_enabled():
 def enable_localnet_routing():
     write_cmd = "sysctl -w net.ipv4.conf.all.route_localnet=1"
     out, code = system(write_cmd)
-    assert code == 0, "critical error (aborting now before modifying the system)"
+    return (code == 0)
+
+# TODO: adde persistence with /etc/sysctl.d/
+def disable_localnet_routing():
+    write_cmd = "sysctl -w net.ipv4.conf.all.route_localnet=0"
+    out, code = system(write_cmd)
+    return (code == 0)
+
+
+# check if chains are defined
+def is_enabled():
+    return chain_exists("portforward")
 
 # edit the database
 def set_enabled(enabled: bool):
     config = read_db()
     config["enabled"] = enabled
     write_db(config)
+
 
 @dataclass
 class PortForward:
@@ -507,7 +511,8 @@ class PortForward:
     #    assert 0 < self.destination_port < 65_535
     #    assert r'(\d{2,3}\.){3}\d{2,3}'.match(self.destination_address)
 
-def read_port_forwards():
+#def read_port_forwards():
+def list_ports():
     config = read_db()
     ports = []
     for source_port, destination in config["ports"].items():
@@ -545,16 +550,18 @@ def read_port_forwards():
 
 
 def enable():
-    if not is_localnet_routing_enabled():
-        print("enabling localhost routing (so that localhost:<port> is routed to the destination)")
-        enable_localnet_routing()
-
     if is_enabled():
         # TODO: update rules (fix them if needed) without removing them ?
         # there is currently no self-repair mechanism, and no known case of rule corruption that cannot be fixed by simply restarting the port forwarding
         return
 
-    port_forwards = read_port_forwards()
+    port_forwards = list_ports() #read_port_forwards()
+
+    if not is_localnet_routing_enabled():
+        print("enabling localhost routing (so that localhost:<port> is routed to the destination)")
+        assert enable_localnet_routing(), "critical error (aborting now before modifying the system)"
+
+
     define_chains()
     for p in port_forwards:
         #print(p)
@@ -570,6 +577,8 @@ def enable():
 
 
 def disable():
+    if is_localnet_routing_enabled():
+        disable_localnet_routing()
     # cleanup rules
     if chain_exists("portforward"):
         assert empty_chain("portforward")
@@ -589,6 +598,80 @@ def disable():
 #disable()
 #print(is_enabled())
 
+
+"""
+operations for rule management frontend
+
+operations:
+    -add rule
+    -remove rule
+
+TODO:
+    -live-edit forwarding rules (if the service is enabled)
+    -edit the db to keep the running and saved configuration synced
+
+TODO:
+    -persistence of enable (with a service ?)
+    -database of rules to enable during activation
+    -restore/remove rules
+    -live-edit rules
+"""
+
+
+def add_port(p: PortForward):
+    # TODO: test
+    config = read_db()
+    formatted_protocols = "" if len(p.protocols) == 2 else f"{p.protocols[0]}"
+    # TODO: make destination ports explicit in the database
+    formatted_port = "" if p.destination_port == p.source_port else f":{p.destination_port}"
+    formatted_destination = f"{p.destination_address}{formatted_port}{formatted_protocols}"
+    config["ports"].append(formatted_destination)
+    write_db(config)
+
+    if is_enabled():
+        for protocol in p.protocols:
+            port_rewrite(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
+            port_forward(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
+            port_forward_local(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
+            nat_masquerade(p.source_port, p.destination_address,
+                         p.destination_port, protocol)
+
+def remove_rule():
+    ports = list_ports()
+    pass
+
+if not is_enabled():
+    enable()
+rules = list_rules()
+print(rules)
+
+
+#print(is_enabled())
+#enable()
+#print(is_enabled())
+#disable()
+#print(is_enabled())
+
+
+
+
+
+"""
+arg parsing
+
+system management commands:
+    -status
+    -enable
+    -disable
+    -add port
+    -remove port
+
+syntax for port management commands:
+    -add: forward port 80 to 192.168.122.4:8000
+"""
 
 
 
