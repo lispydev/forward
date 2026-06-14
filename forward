@@ -489,7 +489,8 @@ def disable_localnet_routing():
 def is_enabled():
     return chain_exists("portforward")
 
-# edit the database
+# edit to the database only
+# use enable() to create the chains
 def set_enabled(enabled: bool):
     config = read_db()
     config["enabled"] = enabled
@@ -503,6 +504,13 @@ class PortForward:
     destination_port: int
     protocols: list
 
+    def __str__(self):
+        if len(self.protocols) == 1:
+            return f"{self.source_port}/{self.protocols[0]} -> {self.destination_address}:{self.destination_port}"
+        else:
+            assert len(self.protocols) == 2
+            return f"{self.source_port} -> {self.destination_address}:{self.destination_port}"
+
     # TODO: validate user input, not the database itself
     #def validate(self):
     #    for p in self.protocols:
@@ -511,42 +519,51 @@ class PortForward:
     #    assert 0 < self.destination_port < 65_535
     #    assert r'(\d{2,3}\.){3}\d{2,3}'.match(self.destination_address)
 
+# helpers for db parsing
+# db scheme:
+# "source_port": "destination_address:destination_port[/protocol]"
+def read_db_portforward_rule(source_port, destination_string):
+    # parse protocols
+    result = destination_string.split("/")
+    if len(result) == 1:
+        protocols = ["udp", "tcp"]
+    elif len(result) == 2:
+        protocols = [result[1]]
+        destination_string = result[0]
+    else:
+        raise ValueError("Error when parsing the database")
+
+    # parse the port
+    result = destination_string.split(":")
+    if len(result) == 1:
+        destination_address = destination_string
+        destination_port = source_port
+    elif len(result) == 2:
+        destination_address = result[0]
+        destination_port = result[1]
+    else:
+        raise ValueError("Error when parsing the database")
+
+    return PortForward(
+            source_port=source_port,
+            destination_address=destination_address,
+            destination_port=destination_port,
+            protocols=protocols,
+    )
+
+
+
+# read the db and return a list of PortForward descriptors
 #def read_port_forwards():
 def list_ports():
     config = read_db()
     ports = []
     for source_port, destination in config["ports"].items():
-        protocols = []
-        # parse protocols
-        result = destination.split("/")
-        if len(result) == 1:
-            protocols = ["udp", "tcp"]
-        elif len(result) == 2:
-            protocols = [result[1]]
-            destination = result[0]
-        else:
-            raise ValueError("Error when parsing the database")
-
-        # parse the port
-        result = destination.split(":")
-        if len(result) == 1:
-            destination_address = destination
-            destination_port = source_port
-        elif len(result) == 2:
-            destination_address = result[0]
-            destination_port = result[1]
-        else:
-            raise ValueError("Error when parsing the database")
-
-        ports.append(PortForward(
-            source_port=source_port,
-            destination_address=destination_address,
-            destination_port=destination_port,
-            protocols=protocols,
-        ))
+        ports.append(read_db_portforward_rule(source_port, destination))
 
     return ports
 
+#print(list_ports())
 
 
 def enable():
@@ -605,6 +622,7 @@ operations for rule management frontend
 operations:
     -add rule
     -remove rule
+    -list existing rules
 
 TODO:
     -live-edit forwarding rules (if the service is enabled)
@@ -640,13 +658,18 @@ def add_port(p: PortForward):
                          p.destination_port, protocol)
 
 def remove_rule():
-    ports = list_ports()
+    config = read_db()
+    # TODO
     pass
+
+# pretty-print port forwards
+def print_rules():
+    for portforward in list_ports():
+        print(portforward)
 
 if not is_enabled():
     enable()
-rules = list_rules()
-print(rules)
+print_rules()
 
 
 #print(is_enabled())
@@ -670,7 +693,8 @@ system management commands:
     -remove port
 
 syntax for port management commands:
-    -add: forward port 80 to 192.168.122.4:8000
+    -add: forward port 80 to 192.168.122.4:8000 [proto tcp|udp]
+    -rm: forward del port 80 [proto tcp|udp]
 """
 
 
