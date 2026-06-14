@@ -413,7 +413,7 @@ def read_db():
 
 def write_db(config):
     with open(db_path, "w") as f:
-        json.dump(f, config)
+        json.dump(config, f)
 
 
 # high level iptables and db operations
@@ -552,6 +552,12 @@ def read_db_portforward_rule(source_port, destination_string):
     )
 
 
+def write_db_portforward_rule(portforward):
+    destination = f"{portforward.destination_address}:{portforward.destination_port}"
+    if len(portforward.protocols) == 1:
+        destination += f"/{portforward.protocols[0]}"
+    return (portforward.source_port, destination)
+
 
 # read the db and return a list of PortForward descriptors
 #def read_port_forwards():
@@ -639,11 +645,15 @@ TODO:
 def add_port(p: PortForward):
     # TODO: test
     config = read_db()
-    formatted_protocols = "" if len(p.protocols) == 2 else f"{p.protocols[0]}"
+    print(config)
+    #formatted_protocols = "" if len(p.protocols) == 2 else f"{p.protocols[0]}"
     # TODO: make destination ports explicit in the database
-    formatted_port = "" if p.destination_port == p.source_port else f":{p.destination_port}"
-    formatted_destination = f"{p.destination_address}{formatted_port}{formatted_protocols}"
-    config["ports"].append(formatted_destination)
+    #formatted_port = "" if p.destination_port == p.source_port else f":{p.destination_port}"
+    #formatted_destination = f"{p.destination_address}{formatted_port}{formatted_protocols}"
+    source_port, destination = write_db_portforward_rule(p)
+    #config["ports"].append(formatted_destination)
+    config["ports"][source_port] = destination
+    print(config)
     write_db(config)
 
     if is_enabled():
@@ -657,19 +667,62 @@ def add_port(p: PortForward):
             nat_masquerade(p.source_port, p.destination_address,
                          p.destination_port, protocol)
 
-def remove_rule():
+def remove_port(source_port, protocols=None):
+    if protocols is None:
+        removed_protocols = ["udp", "tcp"]
     config = read_db()
-    # TODO
-    pass
+    for i, (db_source_port, destination) in enumerate(config["ports"].items()):
+        portforward = read_db_portforward_rule(db_source_port, destination)
+        # in the json db, object keys must be strings, so db_source_port is serialized as str
+        if source_port == int(db_source_port):
+            #print("match!")
+            removed_protocols = []
+            for protocol in protocols:
+                #print(protocol)
+                if protocol in portforward.protocols:
+                    #print("removing protocol!")
+                    portforward.protocols.remove(protocol)
+                    removed_protocols.append(protocol)
+            # update the database
+            if removed_protocols:
+                if len(portforward.protocols) > 0:
+                    # serialize the rule
+                    config["ports"][i] = write_db_portforward_rule(portforward)
+                else:
+                    # remove the rule
+                    config["ports"].pop(str(source_port))
+                write_db(config)
+
+                if is_enabled():
+                    # TODO: use delete() to remove only the iptables rules that matter
+                    # (source_port -> portforward.destination_address:portforward.destination_port/removed_protocols)
+                    print("refreshing all port forwarding rules")
+                    disable()
+                    enable()
+                return True
+    return False
+
 
 # pretty-print port forwards
-def print_rules():
+def print_ports():
     for portforward in list_ports():
         print(portforward)
 
 if not is_enabled():
     enable()
-print_rules()
+
+# test adding a rule
+#print_ports()
+#rule = PortForward(
+#    source_port=9001,
+#    destination_address="127.0.0.1",
+#    destination_port=9002,
+#    protocols=["udp", "tcp"],
+#)
+#add_port(rule)
+#print_ports()
+#remove_port(rule.source_port, rule.protocols)
+#print_ports()
 
 
 #print(is_enabled())
@@ -677,7 +730,6 @@ print_rules()
 #print(is_enabled())
 #disable()
 #print(is_enabled())
-
 
 
 
