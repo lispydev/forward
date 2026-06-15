@@ -6,7 +6,6 @@ forward is the ufw of port forwarding.
 Please note that port forwarding will ignore firewall rules created with ufw.
 """
 
-# TODO: validate input (in parse_port_forward)
 
 import sys
 import os
@@ -745,18 +744,65 @@ system management commands:
     -remove port
 
 syntax for port management commands:
-    -add: forward port 80 to 192.168.122.4:8000 [proto tcp|udp]
-    -rm: forward del port 80 [proto tcp|udp]
+    forward add port <port> to <ip>:<port> [proto tcp|udp]
+    forward del port <port> [proto tcp|udp]
+
+other commands:
+    forward enable
+    forward disable
+    forward status
+
+TODO:
+    -support interface hardcoding ? (might be out of scope for this cli project)
+    -allow implicit "add" in forward add commands
+        example: forward port <port> to <ip>:<port>
 """
 
 
 
-"""
-arg parsing
-"""
+# argument parsing ("port ... to ...:... proto ...", "del port ...")
 
-# argument parsing ("add port ... to ...:... proto ...", "del port ...")
-def parse_port_forward(argv):
+# sub-parsers for "port <port>", "to <destination>", "proto <proto>"
+def parse_port_args(argv, cursor: int):
+    if cursor + 1 >= len(argv):
+        print("no port")
+        return None
+    if argv[cursor] != "port":
+        return None
+    value = argv[cursor + 1]
+    return int(value)
+
+def parse_to_args(argv, cursor: int):
+    if cursor + 1 >= len(argv):
+        print("no to")
+        return None
+    if argv[cursor] != "to":
+        return None
+    destination = argv[cursor + 1]
+    # TODO: use a regex ?
+    if ":" in destination:
+        dest_ip, dest_port = destination.split(":")
+        dest_port = int(dest_port)
+    else:
+        dest_ip, dest_port = destination, None
+    dest_ip_parts = dest_ip.split(".")
+    assert len(dest_ip_parts) == 4
+    for part in dest_ip_parts:
+        assert 0 <= int(part) <= 255
+    return dest_ip, dest_port
+
+def parse_proto_args(argv, cursor: int):
+    if cursor + 1 >= len(argv):
+        print("no proto")
+        return None
+    if argv[cursor] != "proto":
+        return None
+    proto = argv[cursor + 1]
+    assert proto in ["udp", "tcp"]
+    return proto
+
+
+def parse_add_args(argv):
     args = {
         "src-port": None,
         "dst-addr": None,
@@ -766,24 +812,56 @@ def parse_port_forward(argv):
     }
     i = 0
     while i < len(argv):
-        kw = argv[i]
-        if kw == "proto":
-            args["protocol"] = argv[i + 1]
+        # port
+        result = parse_port_args(argv, i)
+        if result is not None:
+            args["src-port"] = result
             i += 2
-        elif kw == "port":
-            args["src-port"] = argv[i + 1]
-            i += 2
-        elif kw == "to":
-            destination = argv[i + 1]
-            if ":" in destination:
-                dst_addr, dst_port = destination.split(":")
-                args["dst-addr"] = dst_addr
-                args["dst-port"] = dst_port
-            else:
-                args["dst-addr"] = destination
-                # set after finishing arg parsing
+            continue
+
+        # to
+        result = parse_to_args(argv, i)
+        if result is not None:
+            dest_ip, dest_port = result
+            args["dst-addr"] = dest_ip
+            if dest_port is None:
+                # placeholder as src-port may not be initialized yet
                 args["dst-port"] = "=src-port"
+            else:
+                args["dst-port"] = dest_port
             i += 2
+            continue
+
+        # proto
+        result = parse_proto_args(argv, i)
+        if result is not None:
+            args["protocol"] = result
+            i += 2
+            continue
+
+        print(f"Error: Unexpected argument '{kw}'")
+        usage()
+
+        #kw = argv[i]
+        #if kw == "proto":
+        #    args["protocol"] = argv[i + 1]
+        #    i += 2
+        #elif kw == "port":
+        #    args["src-port"] = argv[i + 1]
+        #    i += 2
+        #elif kw == "to":
+        #    destination = argv[i + 1]
+        #    if ":" in destination:
+        #        dst_addr, dst_port = destination.split(":")
+        #        args["dst-addr"] = dst_addr
+        #        args["dst-port"] = dst_port
+        #    else:
+        #        args["dst-addr"] = destination
+        #        # set after finishing arg parsing
+        #        args["dst-port"] = "=src-port"
+        #    i += 2
+
+        # dead code, "from" was originally used for interface filtering
         #elif kw == "from":
         #    #src_interface = argv[i + 1]
         #    # list the physical interfaces
@@ -795,9 +873,10 @@ def parse_port_forward(argv):
         #    else:
         #        raise ValueError(f"Unknown interface: {src_interface}, expected one among {interfaces}")
         #    i += 2
-        else:
-            print(f"Error: Unexpected argument '{kw}'")
-            usage()
+
+        #else:
+        #    print(f"Error: Unexpected argument '{kw}'")
+        #    usage()
 
 
     # post-processing
@@ -820,8 +899,9 @@ def parse_port_forward(argv):
 
     return args
 
+# TODO: remove this function
 def parse_add(argv):
-    args = parse_port_forward(argv[2:])
+    args = parse_add_args(argv[2:])
 
     # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
     #return args
@@ -948,6 +1028,8 @@ def sort_rules(rewrites, forwards):
 
 # the "list" command
 def print_rules():
+    print_ports()
+    # TODO: refactor this:
     rewrites, forwards = read_iptables()
     rules = sort_rules(rewrites, forwards)
     for rule in rules:
@@ -959,7 +1041,7 @@ def print_rules():
 
 def parse_del(argv):
     # TODO: centralize argument syntax parsing ("port ... [to ...:..] [proto ...]")
-    args = parse_port_forward(argv[2:])
+    args = parse_add_args(argv[2:])
     #assert args["src-iface"] is None, "Specifying inbound interface in delete rules is not supported"
 
     # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
