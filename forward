@@ -803,6 +803,7 @@ def parse_proto_args(argv, cursor: int):
 
 
 def parse_add_args(argv):
+    # TODO: remove the args dict and use variables
     args = {
         "src-port": None,
         "dst-addr": None,
@@ -897,7 +898,15 @@ def parse_add_args(argv):
         proto = args["protocol"]
         raise ValueError(f"Unknown protocol '{proto}'")
 
-    return args
+    rule = PortForward(
+            source_port=args["src-port"],
+            destination_address=args["dst-addr"],
+            destination_port=args["dst-port"],
+            protocols=args["protocols"],
+    )
+    add_port(rule)
+
+    #return args
 
 # TODO: remove this function
 def parse_add(argv):
@@ -1107,8 +1116,10 @@ def parse_args(argv):
         case "--help" | "help":
             usage()
         case "add":
-            add_args = parse_add(argv)
-            return add, add_args
+            parse_add_args(argv[2:])
+            sys.exit(0)
+            #add_args = parse_add(argv)
+            #return add, add_args
         case "list":
             # ignore other arguments for now
             # TODO: parse forms such as "forward list tcp"
