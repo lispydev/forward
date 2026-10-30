@@ -401,7 +401,7 @@ db_path = "ports.json"
 
 default_config = {
     "enabled": False,
-    "ports": [],
+    "ports": {},
 }
 
 def read_db():
@@ -413,6 +413,8 @@ def read_db():
 def write_db(config):
     with open(db_path, "w") as f:
         json.dump(config, f)
+
+
 
 
 # high level iptables and db operations
