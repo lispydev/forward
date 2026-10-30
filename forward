@@ -570,6 +570,17 @@ def list_ports():
 
 #print(list_ports())
 
+# used by DB editing functions (currently, only in the "del" subcommand path)
+# TODO: test
+def write_ports(portforwards):
+    config = read_db()
+    ports = {}
+    for rule in portforwards:
+        source_port, destination = write_db_portforward_rule(rule)
+        ports[source_port] = destination
+    config["ports"] = ports
+    write_db(config)
+
 
 def enable():
     if is_enabled():
@@ -707,6 +718,8 @@ def print_ports():
     for portforward in list_ports():
         print(portforward)
 
+#if is_enabled():
+#    disable()
 if not is_enabled():
     enable()
 
@@ -1052,6 +1065,7 @@ def print_rules():
 
 
 def parse_del_args(argv):
+    # TODO: type src_port correctly in parse_del_args() and parse_add_args()
     src_port = None
     dst_addr = None
     dst_port = None
@@ -1114,13 +1128,37 @@ def parse_del_args(argv):
         proto = protocol
         raise ValueError(f"Unknown protocol '{proto}'")
 
-    rule = PortForward(
-            source_port=src_port,
-            destination_address=dst_addr,
-            destination_port=dst_port,
-            protocols=protocols,
-    )
-    remove_port(rule)
+    db_rules = list_ports()
+    for rule in db_rules:
+        if rule.source_port == str(src_port):
+            # user filters ([to dest:port])
+            if dst_port is not None and str(dst_port) != rule.destination_port:
+                continue
+            if dst_addr is not None and str(dst_addr) != rule.destination_address:
+                continue
+
+            for proto in rule.protocols:
+                if proto in protocols:
+                    rule.protocols.remove(proto)
+
+            if not rule.protocols:
+                db_rules.remove(rule)
+
+    write_ports(db_rules)
+
+    if is_enabled():
+        print("reloading iptables port forwarding rules")
+        disable()
+        enable()
+
+
+    #rule = PortForward(
+    #        source_port=src_port,
+    #        destination_address=dst_addr,
+    #        destination_port=dst_port,
+    #        protocols=protocols,
+    #)
+    #remove_port(rule)
 
 
 
