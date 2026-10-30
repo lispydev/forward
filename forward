@@ -765,7 +765,7 @@ TODO:
 # sub-parsers for "port <port>", "to <destination>", "proto <proto>"
 def parse_port_args(argv, cursor: int):
     if cursor + 1 >= len(argv):
-        print("no port")
+        print("argparsing debug: no port")
         return None
     if argv[cursor] != "port":
         return None
@@ -774,7 +774,7 @@ def parse_port_args(argv, cursor: int):
 
 def parse_to_args(argv, cursor: int):
     if cursor + 1 >= len(argv):
-        print("no to")
+        print("argparsing debug: no to")
         return None
     if argv[cursor] != "to":
         return None
@@ -793,7 +793,7 @@ def parse_to_args(argv, cursor: int):
 
 def parse_proto_args(argv, cursor: int):
     if cursor + 1 >= len(argv):
-        print("no proto")
+        print("argparsing debug: no proto")
         return None
     if argv[cursor] != "proto":
         return None
@@ -840,7 +840,7 @@ def parse_add_args(argv):
             i += 2
             continue
 
-        print(f"Error: Unexpected argument '{kw}'")
+        print(f"Error: Unexpected argument '{argv[i]}'")
         usage()
 
         #kw = argv[i]
@@ -1038,7 +1038,8 @@ def sort_rules(rewrites, forwards):
 # the "list" command
 def print_rules():
     print_ports()
-    # TODO: refactor this:
+    # TODO: remove this after testing
+    """
     rewrites, forwards = read_iptables()
     rules = sort_rules(rewrites, forwards)
     for rule in rules:
@@ -1047,10 +1048,89 @@ def print_rules():
         else:
             #assert len(rule.protocols) == 1
             print(f"{rule.src_port}/{rule.protocols[0]} -> {rule.dst_address}:{rule.dst_port}")
+    """
 
+
+def parse_del_args(argv):
+    src_port = None
+    dst_addr = None
+    dst_port = None
+    protocol = None
+    #src_iface = None
+
+    i = 0
+    while i < len(argv):
+        # port
+        result = parse_port_args(argv, i)
+        if result is not None:
+            src_port = result
+            i += 2
+            continue
+
+        # to
+        result = parse_to_args(argv, i)
+        if result is not None:
+            dest_ip, dest_port = result
+            dst_addr = dest_ip
+            assert dest_port is not None, "specifying the destination address but not the destination port in del forms is not supported. please remove the destination address or specify the destination port"
+            #if dest_port is None:
+            #    # TODO: raise an error instead of guessing the port?
+            #    # the full del syntax is allowed in order to prevent ambiguity, there's no reason for fixing implicit destination ports when the destination address is specified and not the destination port
+            #    # currently, dst_port is src_port if nothing is set
+            #    # placeholder as src_port may not be initialized yet
+            #    dst_port = "=src_port"
+            #else:
+            dst_port = dest_port
+
+            i += 2
+            continue
+
+        # proto
+        result = parse_proto_args(argv, i)
+        if result is not None:
+            protocol = result
+            i += 2
+            continue
+
+        #print(f"Error: Unexpected argument '{kw}'")
+        print(f"Error: Unexpected argument '{argv[i]}'")
+        usage()
+
+    # post-processing
+    if src_port is None:
+        print("Error: Expecting a forwarded source port")
+        usage()
+
+    if dst_port == "=src_port":
+        dst_port = src_port
+
+    if protocol is None:
+        protocols = ["tcp", "udp"]
+    elif protocol == "tcp":
+        protocols = ["tcp"]
+    elif protocol == "udp":
+        protocols = ["udp"]
+    else:
+        proto = protocol
+        raise ValueError(f"Unknown protocol '{proto}'")
+
+    rule = PortForward(
+            source_port=src_port,
+            destination_address=dst_addr,
+            destination_port=dst_port,
+            protocols=protocols,
+    )
+    remove_port(rule)
+
+
+
+# TODO: remove this function
 def parse_del(argv):
     # TODO: centralize argument syntax parsing ("port ... [to ...:..] [proto ...]")
     args = parse_add_args(argv[2:])
+    print(argv)
+    print(args)
+    sys.exit(0)
     #assert args["src-iface"] is None, "Specifying inbound interface in delete rules is not supported"
 
     # TODO (for clarity): use a dictionary ? (subcommand(**kwargs) or subcommand(args))
@@ -1125,7 +1205,9 @@ def parse_args(argv):
             # TODO: parse forms such as "forward list tcp"
             return print_rules, []
         case "del":
-            return remove, parse_del(argv)
+            parse_del_args(argv[2:])
+            sys.exit(0)
+            #return remove, parse_del(argv)
         case default:
             usage()
 
