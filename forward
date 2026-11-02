@@ -396,8 +396,13 @@ TODO: implement persistence
 
 # Database operations
 
-# TODO: use posix paths (/var/lib/portforward,...)
-db_path = "ports.json"
+etcdir = "/etc/portforward"
+db_path = f"{etcdir}/rules.json"
+
+# create the directory if not already setup by the package manager during installation
+if not os.path.exists(etcdir):
+    print("creating /etc/portforward")
+    os.mkdir(etcdir)
 
 default_config = {
     "enabled": False,
@@ -1275,9 +1280,14 @@ def parse_args(argv):
             sys.exit(0)
         case "reload":
             if is_enabled():
+                # used for debugging 
                 disable()
                 enable()
                 print("reloaded port forwarding rules")
+            elif is_set_enabled():
+                # used for persistence after a reboot
+                enable()
+                print("loaded port forwarding rules")
             else:
                 print("port forwarding is disabled")
             sys.exit(0)

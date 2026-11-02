@@ -26,7 +26,7 @@ sudo forward start
 
 # forward port 80 to a VM:
 sudo forward add port 80 to 192.168.122.3:80
-forward list
+sudo forward list
 sudo forward del port 80
 
 sudo forward stop
