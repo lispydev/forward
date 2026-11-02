@@ -1,6 +1,6 @@
 # forward
 
-forward is a frontend to manage port forwarding rules with iptables.
+forward is a cli frontend to manage port forwarding rules with iptables.
 
 It works similarly to UFW, the uncomplicated firewall.
 
@@ -22,21 +22,23 @@ sudo mv ./forward /usr/bin/local/
 
 forward will track its own rules to manage them on its own:
 ```sh
-# forward port 80 to a libvirt VM in the default NAT:
+sudo forward start
+
+# forward port 80 to a VM:
 sudo forward add port 80 to 192.168.122.3:80
-sudo forward list
+forward list
 sudo forward del port 80
+
+sudo forward stop
 ```
 
+Port forwarding rules will be saved in ports.json. Currently, this file is created and read in the current working directory when running forward.
 
 
 # Roadmap
 
 Todo:
-- improve input validation
-- add persistence
 - package in distros for ease of install
-- hide iptables commands
 - automate tests
-- add iptables integrity checks
+- process rule deletions without reloading other rules
 
