@@ -411,6 +411,8 @@ def read_db():
         return json.load(f)
 
 def write_db(config):
+    if not os.path.exists(db_path):
+        print(f"saving configuration in {db_path}")
     with open(db_path, "w") as f:
         json.dump(config, f)
 
@@ -488,6 +490,7 @@ def disable_localnet_routing():
 
 # check if chains are defined
 def is_enabled():
+    # checks the runtime
     return chain_exists("portforward")
 
 # edit to the database only
@@ -496,6 +499,10 @@ def set_enabled(enabled: bool):
     config = read_db()
     config["enabled"] = enabled
     write_db(config)
+
+def is_set_enabled():
+    config = read_db()
+    return config["enabled"]
 
 
 @dataclass
@@ -593,8 +600,8 @@ def enable():
     port_forwards = list_ports() #read_port_forwards()
 
     if not is_localnet_routing_enabled():
-        print("enabling localhost routing (so that localhost:<port> is routed to the destination)")
         assert enable_localnet_routing(), "critical error (aborting now before modifying the system)"
+        print("enabled port routing on localhost")
 
 
     define_chains()
@@ -614,6 +621,7 @@ def enable():
 def disable():
     if is_localnet_routing_enabled():
         disable_localnet_routing()
+        print("disabled port routing on localhost")
     # cleanup rules
     if chain_exists("portforward"):
         assert empty_chain("portforward")
@@ -722,8 +730,8 @@ def print_ports():
 
 #if is_enabled():
 #    disable()
-if not is_enabled():
-    enable()
+#if not is_enabled():
+#    enable()
 
 # test adding a rule
 #print_ports()
@@ -1212,6 +1220,7 @@ def usage():
             "usage: forward add|list|del [...args]\n"
             "\n"
             "examples:\n"
+            "    forward start|stop|status|reload\n"
             "    forward add port 80 to 192.168.122.5:80 [proto tcp]\n"
             "    forward list\n"
             "    forward del port 80 [to 192.168.122.5:80] [proto tcp]"
@@ -1248,6 +1257,36 @@ def parse_args(argv):
             parse_del_args(argv[2:])
             sys.exit(0)
             #return remove, parse_del(argv)
+        case "start":
+            if not is_enabled():
+                enable()
+                set_enabled(True)
+                print("enabled port forwarding")
+            else:
+                print("port forwarding is already enabled")
+            sys.exit(0)
+        case "stop":
+            if is_enabled():
+                disable()
+                set_enabled(False)
+                print("disabled port forwarding")
+            else:
+                print("port forwarding is not enabled")
+            sys.exit(0)
+        case "reload":
+            if is_enabled():
+                disable()
+                enable()
+                print("reloaded port forwarding rules")
+            else:
+                print("port forwarding is disabled")
+            sys.exit(0)
+        case "status":
+            if is_set_enabled():
+                print("port forwarding is enabled")
+            else:
+                print("port forwarding is disabled")
+            sys.exit(0)
         case default:
             usage()
 
