@@ -32,7 +32,7 @@ sudo forward del port 80
 sudo forward stop
 ```
 
-Port forwarding rules will be saved in ports.json. Currently, this file is created and read in the current working directory when running forward.
+Port forwarding rules will be saved in /etc/portforward/rules.json.
 
 
 # Roadmap
@@ -41,4 +41,5 @@ Todo:
 - package in distros for ease of install
 - automate tests
 - process rule deletions without reloading other rules
+- write service files for persistence
 
